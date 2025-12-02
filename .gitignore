@@ -1,0 +1,68 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# VSCode
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtualenv
+venv/
+ENV/
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/.npm-cache/
+
+# Logs
+*.log
+
+# Data/Media
+*.mov
+*.mp4
+*.avi
+*.mkv
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.bak
+*.tmp
+
+# IDE
+.idea/
+
+# EasyRAG历史目录
+easyRAG/
+
+# Others
+*.swp
+*.swo
+
+# Static/Cache
+static/
+backend/static/
+
+# Scripts
+scripts/
+backend/scripts/
+
+# Test outputs
+test.mov
+

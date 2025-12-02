@@ -1,0 +1,10 @@
+body { margin:0; font-family: Inter, system-ui, sans-serif; }
+/* Basic dark theme background */
+body { background:#111827; color:#e5e7eb; }
+* { box-sizing:border-box; }
+.scrollbar::-webkit-scrollbar { width:8px; }
+.scrollbar::-webkit-scrollbar-thumb { background:#374151; border-radius:4px; }
+.markdown-content { line-height:1.6; }
+.markdown-content pre { background:#1f2937; padding:12px; border-radius:8px; overflow:auto; }
+.markdown-content code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.markdown-content a { color:#60a5fa; }

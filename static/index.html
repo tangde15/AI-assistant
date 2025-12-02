@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EasyRAG — 聊天测试界面</title>
+  <style>
+    body{font-family:Segoe UI,Roboto,Arial;margin:18px;background:#f3f4f6}
+    .container{max-width:900px;margin:0 auto;background:#fff;padding:18px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+    #messages{height:520px;overflow:auto;padding:12px;border:1px solid #e6e6e6;border-radius:6px;background:#ffffff}
+    .msg{margin:8px 0;padding:10px;border-radius:8px}
+    .user{background:#e6f7ff;border:1px solid #bae7ff}
+    .ai{background:#f6ffed;border:1px solid #b7eb8f}
+    .tool{background:#fff7e6;border:1px solid #ffd591}
+    .meta{font-size:12px;color:#666;margin-bottom:8px}
+    .controls{display:flex;gap:8px;margin-top:12px}
+    input[type="text"]{flex:1;padding:10px;border:1px solid #d9d9d9;border-radius:6px}
+    button{padding:8px 12px;border-radius:6px;border:1px solid #d9d9d9;background:#fff;cursor:pointer}
+    .small{font-size:13px;color:#444}
+    .footer{margin-top:10px;font-size:13px;color:#666}
+    .session-id{word-break:break-all;background:#f5f5f7;padding:6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>EasyRAG 前端测试</h2>
+    <div class="meta">后端地址：<span id="backend">http://127.0.0.1:8000</span></div>
+
+    <div id="messages" aria-live="polite"></div>
+
+    <div class="controls">
+      <input id="input" type="text" placeholder="输入你的问题，按回车或点发送" />
+      <button id="send">发送</button>
+      <button id="newSession">新会话</button>
+    </div>
+
+    <div class="footer">
+      <div>当前 session: <span id="session" class="session-id">(未创建)</span></div>
+      <div class="small">提示：若使用本页面，请把它用静态服务器运行在 <code>http://localhost:5173</code>（或把后端 CORS 加上你的 origin）。</div>
+    </div>
+  </div>
+
+  <script>
+    const backend = document.getElementById('backend').textContent.trim();
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const newBtn = document.getElementById('newSession');
+    const sessionEl = document.getElementById('session');
+
+    let sessionId = null;
+    // 当前正在构建的 AI 回复 DOM 节点（用于把流式片段合并为单个回答）
+    let currentAiNode = null;
+
+    function appendMessage(role, text, meta) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + (role === 'user' ? 'user' : role === 'ai' ? 'ai' : 'tool');
+      if (meta) {
+        const m = document.createElement('div');
+        m.className = 'meta';
+        m.textContent = meta;
+        div.appendChild(m);
+      }
+      const p = document.createElement('div');
+      p.textContent = text;
+      div.appendChild(p);
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
+    }
+
+    function startAiMessage(initialText) {
+      // 创建或替换当前 AI 回答块
+      currentAiNode = document.createElement('div');
+      currentAiNode.className = 'msg ai';
+      const m = document.createElement('div');
+      m.className = 'meta';
+      m.textContent = 'assistant';
+      currentAiNode.appendChild(m);
+      const p = document.createElement('div');
+      p.className = 'ai-content';
+      p.textContent = initialText || '';
+      currentAiNode.appendChild(p);
+      messagesEl.appendChild(currentAiNode);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function appendAiText(text) {
+      if (!currentAiNode) {
+        startAiMessage(text);
+        return;
+      }
+      const p = currentAiNode.querySelector('.ai-content');
+      if (p) {
+        p.textContent = p.textContent + text;
+      } else {
+        const np = document.createElement('div');
+        np.className = 'ai-content';
+        np.textContent = text;
+        currentAiNode.appendChild(np);
+      }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function createNewSession(question) {
+      // 调用 /api/session/new，返回 session id 与首轮回答
+      try {
+        const resp = await fetch(backend + '/api/session/new', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({question: question || '你好'})
+        });
+        if (!resp.ok) throw new Error('Status ' + resp.status);
+        const data = await resp.json();
+        if (data.session_id) {
+          sessionId = data.session_id;
+          sessionEl.textContent = sessionId;
+        }
+        if (data.answer) appendMessage('ai', data.answer, 'assistant');
+      } catch (err) {
+        appendMessage('tool', '创建会话失败：' + err.message, 'error');
+      }
+    }
+
+    async function sendQuestion(question) {
+      if (!question) return;
+      appendMessage('user', question, '你');
+      // 新的用户问题开始一轮新的 AI 回复，清空当前 AI 缓存节点以便合并新的流
+      currentAiNode = null;
+
+      // 如果没有 sessionId，直接调用 /api/chat（后端会首行返回 session 信息）
+      const payload = sessionId ? {question, session_id: sessionId} : {question};
+      try {
+        const resp = await fetch(backend + '/api/chat', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        if (!resp.ok) {
+          const txt = await resp.text();
+          throw new Error('Status ' + resp.status + ': ' + txt);
+        }
+
+        // 读取流式 NDJSON（每行 JSON 对象）
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        let aiBuffer = '';
+        while (true) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, {stream: true});
+          const parts = buf.split('\n');
+          buf = parts.pop();
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            try {
+              const obj = JSON.parse(part);
+              if (obj.type === 'session') {
+                sessionId = obj.content;
+                sessionEl.textContent = sessionId;
+                appendMessage('tool', '获得 session id: ' + sessionId, 'session');
+              } else if (obj.type === 'ai') {
+                // 把流式片段合并到同一个 AI 文本块中
+                appendAiText(obj.content);
+              } else if (obj.type === 'tool') {
+                appendMessage('tool', JSON.stringify(obj), 'tool');
+              } else {
+                appendMessage('tool', JSON.stringify(obj), 'unknown');
+              }
+            } catch (e) {
+              console.error('parse error', e, part);
+            }
+          }
+        }
+        // 处理剩余缓冲区（若后端没有换行结尾）
+        if (buf.trim()) {
+          try {
+            const obj = JSON.parse(buf);
+            if (obj.type === 'session') { sessionId = obj.content; sessionEl.textContent = sessionId; }
+            else if (obj.type === 'ai') appendAiText(obj.content);
+          } catch (e) { console.warn('剩余缓冲区解析失败', e); }
+        }
+      } catch (err) {
+        appendMessage('tool', '请求错误：' + err.message, 'error');
+      }
+    }
+
+    sendBtn.addEventListener('click', () => {
+      const q = inputEl.value.trim();
+      if (!q) return;
+      inputEl.value = '';
+      sendQuestion(q);
+    });
+
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendBtn.click();
+      }
+    });
+
+    newBtn.addEventListener('click', async () => {
+      // 创建新会话并清空消息区（保留历史可按需修改）
+      messagesEl.innerHTML = '';
+      sessionId = null;
+      sessionEl.textContent = '(未创建)';
+      await createNewSession('你好');
+    });
+
+    // 可选：页面加载时创建空会话
+    // createNewSession('你好');
+  </script>
+</body>
+</html>
