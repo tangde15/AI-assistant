@@ -3,6 +3,8 @@
 """
 import os
 from typing import List
+from transformers import AutoTokenizer
+import re
 
 def read_pdf(path: str) -> str:
     """解析 PDF 文件"""
@@ -111,14 +113,105 @@ def read_file(path: str) -> str:
         raise ValueError(f"不支持的文件类型: {ext}")
 
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[str]:
+class BGEChunker:
+    """BGE 语义切片器：基于 BGE tokenizer 的句子级切片"""
+    def __init__(self, 
+                 model_name="BAAI/bge-base-zh-v1.5",
+                 chunk_size=300,
+                 overlap=50):
+        print(f"[BGE切片器] 初始化，模型: {model_name}")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+        print(f"[BGE切片器] chunk_size={chunk_size} tokens, overlap={overlap} tokens")
+
+    def split_sentences(self, text):
+        """中文断句规则"""
+        text = re.sub(r"\s+", " ", text)
+        sentences = re.split(r"(?<=[。！？，；：\n])", text)
+        return [s.strip() for s in sentences if s.strip()]
+
+    def tokenize_len(self, text):
+        """计算文本 token 长度"""
+        return len(self.tokenizer.encode(text))
+
+    def merge_sentences(self, sentences):
+        """合并句子到满足 chunk_size"""
+        chunks = []
+        current = []
+
+        for sent in sentences:
+            current.append(sent)
+            token_len = self.tokenize_len("".join(current))
+
+            if token_len > self.chunk_size:
+                # 超长 → 分段
+                if len(current) > 1:
+                    chunks.append("".join(current[:-1]))
+                    current = [current[-1]]
+                else:
+                    # 单句超长，直接加入
+                    chunks.append(current[0])
+                    current = []
+
+        if current:
+            chunks.append("".join(current))
+
+        return chunks
+
+    def add_overlap(self, chunks):
+        """重叠处理"""
+        final = []
+        prev_tokens = []
+
+        for chunk in chunks:
+            tokens = self.tokenizer.encode(chunk)
+            # 添加重叠
+            if prev_tokens and len(prev_tokens) > self.overlap:
+                overlap_tokens = prev_tokens[-self.overlap:]
+                merged = self.tokenizer.decode(overlap_tokens + tokens, skip_special_tokens=True)
+                final.append(merged)
+            else:
+                final.append(chunk)
+
+            prev_tokens = tokens
+
+        return final
+
+    def chunk(self, text):
+        """主入口：文本 → 语义切片"""
+        sentences = self.split_sentences(text)
+        print(f"[BGE切片器] 分句完成，共 {len(sentences)} 句")
+        merged = self.merge_sentences(sentences)
+        print(f"[BGE切片器] 合并句子，生成 {len(merged)} 个初步片段")
+        final = self.add_overlap(merged)
+        print(f"[BGE切片器] 添加重叠，最终 {len(final)} 个片段")
+        return final
+
+
+# 全局切片器实例（避免重复加载 tokenizer）
+_chunker = None
+
+def get_chunker():
+    """获取全局切片器实例"""
+    global _chunker
+    if _chunker is None:
+        _chunker = BGEChunker(
+            model_name="BAAI/bge-base-zh-v1.5",
+            chunk_size=300,
+            overlap=50
+        )
+    return _chunker
+
+
+def chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> List[str]:
     """
-    将长文本切分成多个片段（chunking）
+    将长文本切分成多个片段（基于 BGE 语义切片）
     
     Args:
         text: 原始文本
-        chunk_size: 每个片段的最大字符数
-        overlap: 片段之间的重叠字符数
+        chunk_size: 每个片段的最大 token 数（默认 300）
+        overlap: 片段之间的重叠 token 数（默认 50）
     
     Returns:
         文本片段列表
@@ -126,32 +219,13 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[str
     if not text or not text.strip():
         return []
     
-    print(f"[文本切片] 开始切片，文本长度: {len(text)} 字符")
-    print(f"[文本切片] 切片大小: {chunk_size} 字符，重叠: {overlap} 字符")
+    print(f"[文本切片] 开始语义切片，文本长度: {len(text)} 字符")
+    print(f"[文本切片] chunk_size={chunk_size} tokens, overlap={overlap} tokens")
     
-    chunks = []
-    start = 0
-    text_len = len(text)
+    chunker = get_chunker()
+    chunks = chunker.chunk(text)
     
-    while start < text_len:
-        end = min(start + chunk_size, text_len)
-        chunk = text[start:end].strip()
-        
-        if chunk:  # 只添加非空片段
-            chunks.append(chunk)
-            print(f"[文本切片] 已生成第 {len(chunks)} 个片段 ({len(chunk)} 字符)")
-        
-        # 如果已经到达末尾，退出
-        if end >= text_len:
-            break
-            
-        start = end - overlap
-        
-        # 避免无限循环
-        if start <= 0:
-            start = end
-    
-    print(f"[文本切片] 切片完成，共生成 {len(chunks)} 个片段")
+    print(f"[文本切片] 语义切片完成，共生成 {len(chunks)} 个片段")
     return chunks
 
 

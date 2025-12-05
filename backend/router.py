@@ -2,6 +2,11 @@
 RAG 路由器：根据知识库相似度分数决定使用知识库还是网络搜索
 核心思想：代码控制决策，LLM 只负责回答
 """
+import sys
+import os
+# 将项目根目录添加到 Python 搜索路径
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from knowledgebase import search_knowledge
 from tools import _search_internet_impl
 import json
@@ -39,80 +44,52 @@ def route_search(query: str, score_threshold_low: float = 0.45, score_threshold_
     """
     print(f"\n[Router] 开始路由查询: {query}")
     
-    # 第一轮：知识库检索（top 3）
-    print(f"[Router] 第一轮知识库检索 (top_k=3)...")
+    # 集成 reranker 流程
+    from retrieval.reranker import rerank
+    print(f"[Router] Milvus 粗排检索 (top_k=200)...")
     try:
-        first_results = search_knowledge(query, top_k=3)
+        milvus_results = search_knowledge(query, top_k=200)
     except Exception as e:
         print(f"[Router] 知识库检索失败: {e}，降级到网络搜索")
         return _fallback_to_web_search(query, "知识库检索失败")
-    
-    # 如果知识库为空
-    if not first_results:
+
+    if not milvus_results:
         print(f"[Router] 知识库无结果，降级到网络搜索")
         return _fallback_to_web_search(query, "知识库无结果")
-    
-    # 提取分数
-    scores = []
-    for r in first_results:
-        s = r.get('score') if isinstance(r, dict) else None
-        if s is not None:
-            try:
-                scores.append(float(s))
-            except Exception:
-                pass
-    
-    # 如果没有分数信息
-    if not scores:
-        print(f"[Router] 无法获取相似度分数，降级到网络搜索")
-        return _fallback_to_web_search(query, "无相似度分数")
-    
-    max_score = max(scores)
-    print(f"[Router] 第一轮最高分数: {max_score:.4f}")
-    
-    # 决策逻辑
-    if max_score < score_threshold_low:
-        # 低分（< 0.45）→ 网络搜索
-        print(f"[Router] 分数 {max_score:.4f} < {score_threshold_low}（弱相关），使用网络搜索")
-        return _fallback_to_web_search(query, f"相似度过低 ({max_score:.4f})")
-    
-    elif max_score >= score_threshold_high:
-        # 高分（>= 0.60）→ 直接使用知识库
-        print(f"[Router] 分数 {max_score:.4f} >= {score_threshold_high}（强相关），使用知识库结果")
-        return _format_knowledge_result(first_results, f"高相似度匹配 ({max_score:.4f})")
-    
-    else:
-        # 中等分数（0.45 ~ 0.60）→ 第二轮深度检索
-        print(f"[Router] 分数 {max_score:.4f} 在 [{score_threshold_low}, {score_threshold_high})（中度相关），进行第二轮深度检索 (top_k=10)...")
-        try:
-            deep_results = search_knowledge(query, top_k=10)
-        except Exception as e:
-            print(f"[Router] 第二轮检索失败: {e}，使用第一轮结果")
-            return _format_knowledge_result(first_results, f"中等相似度，第二轮失败 ({max_score:.4f})")
-        
-        # 检查第二轮最高分（阈值略低，因为 top_k 增大会影响分数）
-        deep_scores = []
-        for r in deep_results:
-            s = r.get('score') if isinstance(r, dict) else None
-            if s is not None:
-                try:
-                    deep_scores.append(float(s))
-                except Exception:
-                    pass
-        
-        if deep_scores:
-            max_deep_score = max(deep_scores)
-            # 第二轮使用更低的阈值 0.55（因为 top_k=10 扩大后分数分布变化）
-            if max_deep_score >= score_threshold_deep:
-                print(f"[Router] 第二轮最高分数: {max_deep_score:.4f} >= {score_threshold_deep}（深度检索命中），使用知识库结果")
-                return _format_knowledge_result(deep_results, f"深度检索命中 ({max_deep_score:.4f})")
-            else:
-                print(f"[Router] 第二轮分数 {max_deep_score:.4f} < {score_threshold_deep}（仍不足），降级到网络搜索")
-                return _fallback_to_web_search(query, f"深度检索后仍不足 ({max_deep_score:.4f})")
-        else:
-            # 第二轮无有效分数 → 网络搜索
-            print(f"[Router] 第二轮无有效分数，降级到网络搜索")
-            return _fallback_to_web_search(query, f"深度检索无有效结果")
+
+    # 构造 reranker 输入格式
+    docs = []
+    for r in milvus_results:
+        docs.append({
+            "id": r.get("id"),
+            "text": r.get("content", ""),
+            "score": r.get("score", 0)
+        })
+
+    print(f"[Router] reranker 精排 (topk=50)...")
+    reranked = rerank(query, docs, topk=50)
+
+    if not reranked:
+        print(f"[Router] reranker 无结果，降级到网络搜索")
+        return _fallback_to_web_search(query, "reranker 无结果")
+
+    # 统一返回前5条
+    final_docs = reranked[:5]
+    print(f"[Router] 返回知识库精排结果 {len(final_docs)} 条")
+    # 格式化输出
+    items = []
+    for d in final_docs:
+        items.append({
+            "title": "知识库条目",
+            "snippet": d["text"],
+            "score": d["rerank_score"],
+            "id": d["id"]
+        })
+    return {
+        "source": "knowledge",
+        "items": items,
+        "decision_reason": "Milvus+reranker 精排"
+    }
 
 
 def _format_knowledge_result(results, reason):

@@ -37,15 +37,26 @@ app.add_middleware(
 )
 
 # 初始化数据库集合
+
+# 启动时预热 reranker，避免首次请求慢
 @app.on_event("startup")
 async def startup_event():
-    """服务启动时初始化数据库集合"""
+    """服务启动时初始化数据库集合和 reranker 预热"""
     try:
         create_conversations()
         create_knowledgebase()
         print("数据库集合初始化完成")
     except Exception as e:
         print(f"数据库集合初始化失败: {e}")
+    # reranker warmup
+    try:
+        from retrieval import reranker
+        _ = reranker.rerank("warmup", [
+            {"id": "0", "text": "warmup passage", "score": 0.0}
+        ], topk=1)
+        print("reranker 预热完成")
+    except Exception as e:
+        print(f"reranker 预热失败: {e}")
 
 tools = [smart_search]
 

@@ -1,4 +1,3 @@
-
 # Custom-built AI Assistant
 
 本项目为前后端分离的智能助手系统，支持知识库检索与联网搜索，采用 React+Vite 前端与 FastAPI/LangChain 后端。**easyRAG 目录及其内容已不再参与主流程，可直接删除。**
@@ -44,6 +43,22 @@
 - ✅ FastAPI/LangChain 后端，接口统一
 - ✅ 文件上传与解析（PDF/DOCX/PPTX/TXT/MD）
 - ✅ 自动文本切片与向量化存储
+
+
+## BGE 优化点
+
+本项目在以下核心环节全面采用 BGE（BAAI General Embedding）体系，显著提升中文检索与语义相关性：
+
+- **BGE 语义切片**：
+  - 文件解析后，采用 BGEChunker 按句子+token 级别切片，chunk_size=300，overlap=50，确保每个片段适配 BGE embedding 最优效果。
+- **BGE Embedding 向量化**：
+  - 默认使用 `BAAI/bge-m3`（可配置）作为 embedding 模型，生成高质量语义向量，支持中文多场景。
+- **BGE Reranker 精排**：
+  - 检索召回后，使用 `BAAI/bge-reranker-large` 进行语义精排，提升最终返回结果的相关性和准确率。
+- **配置灵活**：
+  - 相关模型名称、参数均可在 `config.env` 配置，便于自定义和升级。
+
+上述优化已在 `file_parser.py`、`retrieval/reranker.py`、`manager.py` 等核心模块实现，详见代码与文档说明。
 
 ## 配置说明
 
@@ -172,8 +187,79 @@ DuckDuckGo 在中国大陆可访问，但如遇问题可检查网络连接或更
 ### 5. 前端样式自定义
 编辑 `frontend/src/global.css` 修改主题/颜色/卡片样式。
 
-### 6. easyRAG 目录
-`easyRAG/` 为历史参考实现，不影响主流程，可安全删除。
+
+## 🛠️ 快速部署与配置步骤
+
+### 1. 克隆项目代码
+```bash
+git clone <你的仓库地址>
+cd Custom-built AI assistant
+```
+
+### 2. 安装依赖
+#### 后端依赖
+```bash
+cd backend
+pip install -r requirements.txt
+```
+#### 前端依赖
+```bash
+cd frontend
+npm install
+```
+
+### 3. 配置环境变量
+项目根目录有 `config.env.example` 文件，**不要直接上传真实密钥到 GitHub**。
+1. 复制模板文件：
+   ```bash
+   cp config.env.example config.env
+   ```
+2. 编辑 `config.env`，填写你的 API 密钥和参数（如 DeepSeek、SiliconFlow、Milvus 等）。
+   示例内容：
+   ```
+   SILICONFLO_API_KEY=你的SiliconFlow密钥
+   SILICONFLO_BASE_URL=https://api.siliconflow.cn/v1
+   SILICONFLO_EMBEDDING_MODEL=BAAI/bge-m3
+   MILVUS_HOST=127.0.0.1
+   MILVUS_PORT=19530
+   MILVUS_DATABASE=AI
+   ```
+
+### 4. 启动后端服务
+```bash
+cd backend
+python app.py
+# 或
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+访问后端接口：`http://localhost:8000`
+
+### 5. 启动前端服务
+```bash
+cd frontend
+npm run dev
+```
+访问前端页面：`http://localhost:5173`（或终端提示端口）
+
+### 6. 文件上传与知识入库
+- 支持 PDF、DOCX、PPTX、TXT、MD 文件
+- 上传接口：`POST /api/knowledge/upload`
+- 上传目录：`backend/uploads/`（自动创建）
+
+### 7. 常见问题排查
+- Milvus 连接失败：检查 `config.env` 配置，确保 Milvus 服务已启动
+- 文件上传失败：检查格式和大小，确认 `backend/uploads/` 有写权限
+- 向量化失败：确保 FlagEmbedding 安装并能下载模型
+- 联网搜索无结果：检查网络或更换搜索引擎
+
+---
+
+## 🆕 近期优化与重要变更
+
+- **依赖冲突修复**：已彻底移除 `peft`，`reranker` 采用 transformers 原生实现，避免 peft/sentence-transformers/transformers 依赖冲突。
+- **检索与精排升级**：知识库检索流程为 Milvus topk=200 → reranker 精排 topk=50 → 最终返回5条，显著提升相关性。
+- **BGE 语义切片**：文件切片方式升级为 BGEChunker，按句子+token 语义切片，提升召回质量。
+- **环境清理建议**：可安全执行 `pip cache purge`、`torch.cuda.empty_cache()`（无 GPU 时自动跳过），不会影响主流程。
 
 ---
 如有问题请提 issue 或联系作者。

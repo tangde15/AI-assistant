@@ -196,14 +196,14 @@ def insert_knowledge_batch(chunks: List[str], source: str):
     return ids
 
 
-def save_file_to_knowledge(file_path: str, chunk_size: int = 500, overlap: int = 100):
+def save_file_to_knowledge(file_path: str, chunk_size: int = 300, overlap: int = 50):
     """
     将文件内容解析、切片并保存到知识库
     
     Args:
         file_path: 文件路径
-        chunk_size: 每个片段的最大字符数
-        overlap: 片段之间的重叠字符数
+        chunk_size: 每个片段的最大 token 数（默认 300）
+        overlap: 片段之间的重叠 token 数（默认 50）
     
     Returns:
         dict: {
@@ -248,7 +248,7 @@ def save_file_to_knowledge(file_path: str, chunk_size: int = 500, overlap: int =
                 "chunks_count": 0
             }
         
-        # 文本切片
+        # 文本切片（基于 BGE 语义切片，chunk_size 和 overlap 现在是 token 数）
         chunks = chunk_text(raw_text, chunk_size=chunk_size, overlap=overlap)
         
         if not chunks:
