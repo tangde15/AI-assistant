@@ -1,3 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+*.eggs/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+venv\
+.venv/
+.venv\
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# Uploads and large data
+backend/uploads/
+uploads/
+static/uploads/
+
+# Test videos / media
+test video/
+test_video/
+videos/
+
+# Logs and runtime
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Docker
+docker-compose.override.yml
+
+# Python packaging
+pip-wheel-metadata/
+*.egg-info/
+
+# Local env config
+config.env
+*.env
 
 # Python
 __pycache__/
@@ -74,4 +135,16 @@ backend/scripts/
 
 # Test outputs
 test.mov
+
+
+# Ignore root-level text files (keep text files in subfolders)
+/*.txt
+
+# Ensure venvs and common virtual env names are ignored
+venv/
+.venv/
+ENV/
+
+# Ensure scripts generated during local runs are ignored
+*.local
 
