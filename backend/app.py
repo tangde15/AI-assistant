@@ -1,3 +1,5 @@
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import logging
 from manager import deepseek_chat
 from langchain.agents import create_agent
@@ -265,6 +267,8 @@ async def chat(request: QuestionRequest):
 
             return StreamingResponse(stream_with_session(), media_type="application/x-ndjson")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         logger.exception('Error in /api/chat')
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -427,6 +431,8 @@ async def upload_file(file: UploadFile = File(...)):
         # 重新抛出 HTTP 异常
         raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         # 确保删除文件
         if os.path.exists(file_path):
             os.unlink(file_path)

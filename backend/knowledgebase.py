@@ -238,19 +238,43 @@ def save_file_to_knowledge(file_path: str, chunk_size: int = 300, overlap: int =
             }
         
         # 解析文件内容
-        raw_text = read_file(file_path)
-        
-        if not raw_text or not raw_text.strip():
-            return {
-                "success": False,
-                "message": "文件内容为空",
-                "ids": [],
-                "chunks_count": 0
-            }
-        
-        # 文本切片（基于 BGE 语义切片，chunk_size 和 overlap 现在是 token 数）
-        chunks = chunk_text(raw_text, chunk_size=chunk_size, overlap=overlap)
-        
+        # === 新增：PPTX 用 Hybrid-PPT-Extractor，其他用原有解析 ===
+        elements = None
+        if filename.lower().endswith(".pptx"):
+            try:
+                from scripts.hybrid_ppt_extractor import extract_all
+                print("[PPTX] 使用 Hybrid-PPT-Extractor 提取内容...")
+                # extract_all 返回大文本，按段落分割
+                ppt_text = extract_all(file_path)
+                # 兼容性处理：按换行拆分
+                raw_texts = [t for t in ppt_text.split("\n") if t.strip()]
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"[PPTX] Hybrid-PPT-Extractor 失败: {e}")
+                raw_texts = []
+        else:
+            raw_text = read_file(file_path)
+            if not raw_text or not raw_text.strip():
+                return {
+                    "success": False,
+                    "message": "文件内容为空",
+                    "ids": [],
+                    "chunks_count": 0
+                }
+            raw_texts = [raw_text]
+
+        # 智能切片（context_aware_split）
+        try:
+            from utils.context_aware_split import context_aware_split
+            chunks = []
+            for text in raw_texts:
+                pieces = context_aware_split(text, max_len=chunk_size, overlap=overlap)
+                chunks.extend([p for p in pieces if p.strip()])
+        except Exception as e:
+            print(f"[切片] context_aware_split 失败: {e}")
+            chunks = [t for t in raw_texts if t.strip()]
+
         if not chunks:
             return {
                 "success": False,
@@ -258,7 +282,7 @@ def save_file_to_knowledge(file_path: str, chunk_size: int = 300, overlap: int =
                 "ids": [],
                 "chunks_count": 0
             }
-        
+
         # 批量插入知识库
         ids = insert_knowledge_batch(chunks, source=filename)
         

@@ -23,25 +23,37 @@ def get_embedding(texts):
     # 确保 texts 是列表
     if isinstance(texts, str):
         texts = [texts]
-    
-    # 调用 OpenAI 兼容的 embedding API
+
+    # 分批请求以避免单次请求体过大导致 413 错误
+    batch_size = int(os.getenv("SILICONFLO_EMBEDDING_BATCH_SIZE", 16))
     url = f"{base_url}/embeddings"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    data = {
-        "model": model,
-        "input": texts
-    }
-    
-    response = httpx.post(url, headers=headers, json=data, timeout=30.0)
-    response.raise_for_status()
-    result = response.json()
-    
-    # 提取向量
-    embeddings = [item["embedding"] for item in result["data"]]
-    return embeddings
+
+    all_embeddings = []
+    # 简单重试逻辑
+    def _post_with_retry(payload, retries=2):
+        for attempt in range(retries + 1):
+            try:
+                resp = httpx.post(url, headers=headers, json=payload, timeout=30.0)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as ex:
+                if attempt == retries:
+                    raise
+        return None
+
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i+batch_size]
+        data = {"model": model, "input": batch}
+        result = _post_with_retry(data, retries=2)
+        # 提取向量
+        batch_embeddings = [item["embedding"] for item in result.get("data", [])]
+        all_embeddings.extend(batch_embeddings)
+
+    return all_embeddings
 
 # 创建一个兼容的 embedding_model 对象
 class EmbeddingModel:

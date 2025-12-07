@@ -132,6 +132,17 @@ npm run dev
 - **接口地址**：`POST /api/knowledge/upload`
 - **上传目录**：`backend/uploads/`（自动创建）
 
+### PPT / PDF 图片 OCR 优化（重要）
+
+本项目对 PPT 和 PDF 的图片文字识别做了兼容与稳定性优化，关键点如下：
+
+- 使用 `unstructured` + `python-pptx` + PaddleOCR 的混合解析器（Hybrid-PPT-Extractor），保证结构化内容与图片文字都能被提取。
+- 在传入 PaddleOCR 前，确保将 `PIL.Image` 转为 `numpy.ndarray`（BGR），或传入本地图片路径，避免 PaddleOCR 忽略 `PIL.Image` 对象。
+- 对 PaddleOCR 的 API 兼容性做了保护：通过检查函数签名决定是否传入 `cls` 参数，并使用单例模式初始化 OCR 实例，避免重复初始化错误。
+- 向量化上传做了分批与重试机制，避免单次请求过大导致的 413 错误。
+
+快速建议：如遇图片文字未识别，请确认 `opencv-python` 是否安装（用于从 PIL 转为 numpy），并查看后端日志中是否有 `[OCR] 识别异常` 或 `[向量化]` 相关输出。
+
 ## API 说明
 
 ### POST /api/chat
@@ -256,10 +267,16 @@ npm run dev
 
 ## 🆕 近期优化与重要变更
 
-- **依赖冲突修复**：已彻底移除 `peft`，`reranker` 采用 transformers 原生实现，避免 peft/sentence-transformers/transformers 依赖冲突。
-- **检索与精排升级**：知识库检索流程为 Milvus topk=200 → reranker 精排 topk=50 → 最终返回5条，显著提升相关性。
-- **BGE 语义切片**：文件切片方式升级为 BGEChunker，按句子+token 语义切片，提升召回质量。
-- **环境清理建议**：可安全执行 `pip cache purge`、`torch.cuda.empty_cache()`（无 GPU 时自动跳过），不会影响主流程。
+- **依赖冲突修复**：已移除 `peft`，`reranker` 改为使用 transformers 原生实现，避免 peft / sentence-transformers / transformers 等包之间的版本冲突。
+- **检索与精排升级**：检索流程调整为 Milvus topk=200 → reranker 精排 topk=50 → 最终返回 5 条，提升召回与排序质量。
+- **BGE 语义切片**：采用 BGEChunker 按句子+token（默认 chunk_size=300, overlap=50）进行语义切片，提高向量化与检索效果。
+- **PPT / PDF 图片 OCR 优化**：新增 Hybrid-PPT-Extractor（`unstructured` + `python-pptx` + PaddleOCR），修复图片文字“被跳过”问题：
+  - 将 `PIL.Image` 转为 `numpy.ndarray`（BGR）或传入临时文件路径以兼容 PaddleOCR；
+  - 在调用前检查 OCR 方法签名，只有支持 `cls` 参数时才传入，避免 unexpected keyword 错误；
+  - 使用 OCR 单例与线程安全初始化，避免重复初始化导致的内部错误。
+- **向量化稳定性**：embeddings 上传采用分批（默认 batch_size=16，可通过 `SILICONFLO_EMBEDDING_BATCH_SIZE` 环境变量调整）与重试机制，降低单次请求体过大（413）与网络抖动风险。
+- **环境清理与恢复建议**：提供 `pip cache purge`、升级 `pip`、在无 GPU 时可安全执行 `torch.cuda.empty_cache()` 等命令以清理环境与显存。
+- **文档与日志**：已更新 `README.md`、`DEPLOYMENT.md`、`CHANGELOG.md`，并补充 `模型识别不到文件内图片内容.txt` 日志，记录问题定位与修复过程。
 
 ---
 如有问题请提 issue 或联系作者。

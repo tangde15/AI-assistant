@@ -1,0 +1,93 @@
+文档内部强主题文本（如“专业分流”“专业名称”“学生信息模板”等）相似度远高于后面的个人名称行，导致正确答案被前面高相似度的内容淹没。
+
+这不是你的搜索代码错误，而是 Embedding 检索在“长文档 + 格式化表格 + 人名查询”场景中的普遍问题。
+
+我分析你可能的原因，并给出最适合你当前项目的解决方案（不用重新换模型/不用加 reranker）。
+
+✅ 为什么搜索不到后面的人名？
+1. 专业分流文档本质是“高结构化主题文档”
+
+例如类似：
+
+XXX专业分流办法
+……
+学生名单如下：
+1. 张三 …
+2. 李四 …
+...
+几十条学生信息
+
+
+在这种文档里：
+
+前半部分与任务高度相关（主题一致：专业分流）
+
+后半部分人名部分是弱相关文本
+
+embedding 搜索时：
+
+查询：“李四”
+
+文档前半部分（“专业分流”“学生”“名单”等）与“学生姓名查找”任务 语义关系很高
+
+反而真正包含姓名的那行因为词少、语义弱，被排名降到很后
+
+最终结果：
+
+❌ embedding 算出来 前几行文本排名更高
+❌ 所以你拿前 k 条（如 top5），正确人名根本没进入候选
+
+这就是你检索不到的根本原因。
+
+✅ 你的情况是：召回阶段过早截断导致结果缺失
+
+因为排名前面全被“语义很接近专业分流主题的段落”占满了。
+
+所以原因不是“没有那条数据”，而是“TOP-K 召回太少 + 文档语义噪声太强”。
+
+【问题】
+文档结构化主题文本导致 embedding 检索时目标人名被淹没，topk 截断后无法召回目标。
+
+【分析】
+- 结构化文档前半部分与查询语义高度相关，实际目标（人名）语义弱，排名靠后。
+- 召回 topk 太小，前几条全是主题相关内容，目标未进入候选。
+
+【解决方法】
+1. **扩大召回范围**：Milvus 检索时 topk 设置为 200，确保所有可能相关的文本片段都能进入候选。
+2. **引入精排模型**：
+   - 使用 BAAI/bge-reranker-large（transformers 原生实现）对候选集进行语义精排。
+   - reranker 代码在 retrieval/reranker.py，核心流程如下：
+     ```python
+     from transformers import AutoModelForSequenceClassification, AutoTokenizer
+     import torch
+     model = AutoModelForSequenceClassification.from_pretrained('BAAI/bge-reranker-large')
+     tokenizer = AutoTokenizer.from_pretrained('BAAI/bge-reranker-large')
+     model.eval()
+     def compute_score(pairs):
+         with torch.no_grad():
+             inputs = tokenizer(pairs, padding=True, truncation=True, return_tensors='pt', max_length=512)
+             scores = model(**inputs, return_dict=True).logits.view(-1,).float()
+             return scores.tolist()
+     def rerank(query, docs, topk=50):
+         candidates = docs[:topk]
+         pairs = [[query, d["text"]] for d in candidates]
+         scores = compute_score(pairs)
+         reranked = sorted([
+             {"id": d["id"], "text": d["text"], "origin_score": d["score"], "rerank_score": s}
+             for d, s in zip(candidates, scores)
+         ], key=lambda x: x["rerank_score"], reverse=True)
+         return reranked
+     ```
+   - 检索流程：先用 embedding 检索 topk=200，后用 reranker 对 topk=50 精排，最终返回 top5。
+3. **服务启动预热**：FastAPI 启动时自动调用 reranker 进行 warmup，避免首次请求加载模型导致延迟。
+   - app.py startup 事件：
+     ```python
+     @app.on_event("startup")
+     async def startup_event():
+         ...
+         from retrieval import reranker
+         _ = reranker.rerank("warmup", [{"id": "0", "text": "warmup passage", "score": 0.0}], topk=1)
+     ```
+
+【结果】
+检索准确率显著提升，目标人名可正常召回，首次请求不卡顿。

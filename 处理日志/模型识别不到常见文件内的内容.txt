@@ -1,0 +1,94 @@
+【PPT 图片与表格识别优化日志】
+
+一、遇到的问题 
+1. PPT 中的表格内容无法被 python-pptx默认识别（只能识别文本框）。 
+2.SmartArt、图表标签、艺术字等结构在默认解析中被遗漏。 
+3.图片中的文字（如截图表格、图表数值）完全无法被读取。 
+4. Unstructured部分页面解析遗漏，导致内容不完整。
+5.OCR（PaddleOCR）模型在多次初始化时出现 “PDX has already beeninitialized” 的报错。 
+6. 由于我曾调整过依赖版本，导致 unstructured /paddleocr / paddlex 等组件之间存在不兼容问题。
+
+二、解决思路（逐项分析） 1. 使用 Unstructured 作为主要解析器
+- 支持图像解析
+- 支持表格结构（infer_table_structure=True）
+- 能处理 SmartArt、复杂文本框
+➜ 解决表格与结构化内容不完整的问题
+
+2.  补充使用 python-pptx
+    -   用于读取 unstructured 漏掉的文本内容
+    -   特别是备注区域、隐藏文本、部分文本框
+        ➜ 保证文本框与备注内容完整
+3.  引入 OCR（PaddleOCR）识别图片
+    【PPT 图片与表格识别优化日志】
+
+    一、问题概述
+    1. 部分 PPT 中的表格、SmartArt、图表注释等结构在默认解析流程中被遗漏；部分文本只能通过 python-pptx 解析到（如备注、隐藏文本）。
+    2. 图片内文字（例如截图表格、图表数值、扫描页）未被提取，导致知识库缺失重要信息。
+    3. 在多次运行或二次部署时，OCR（PaddleOCR）曾出现重复初始化错误（例如“PDX has already been initialized”）。
+    4. 项目依赖版本曾被调整，导致 `unstructured`、`paddleocr`、`paddlex` 等组件出现不兼容，影响解析与 OCR 行为。
+
+    二、原因分析
+    - `unstructured` 能解析结构化文本和表格，但部分复杂对象（SmartArt、特殊图表）解析存在盲区。
+    - `python-pptx` 只能读取幻灯片的文本框与备注，但无法识别图片内文本。
+    - PaddleOCR 期望的输入为 `numpy.ndarray`（BGR）或本地路径字符串，而直接将 `PIL.Image` 对象传入会被忽略，造成“被跳过”的现象。
+    - 多次初始化 PaddleOCR 会引发内部状态冲突（paddlex/paddleocr 的初始化需要单例或线程安全保护）。
+
+    三、解决方案（实现步骤）
+    1) 使用 `unstructured` 作为主解析器以获得结构化文本和表格（参数：`infer_table_structure=True`）。
+    2) 使用 `python-pptx` 补全文本框、备注、隐藏文本等 `unstructured` 漏掉的内容。
+    3) 使用 PaddleOCR 识别图片内文字：
+       - 将 `PIL.Image` 转为 `numpy.ndarray`（BGR）再传给 PaddleOCR；如无 `cv2`，回退到保存临时文件并传入文件路径。
+       - 在调用 OCR 时先检查 `ocr.ocr` / `ocr.predict` 的函数签名，只有在方法支持 `cls` 参数时才传入 `cls=True`，避免因 API 变动导致的异常。
+       - 使用单例模式初始化 OCR 对象，保证只在首次调用时创建，避免重复初始化错误。
+    4) 构建 `Hybrid-PPT-Extractor`，按顺序：`unstructured` → `python-pptx` → `OCR`，合并结果并去重。
+
+    四、实现细节与代码要点
+    - OCR 输入转换：
+      ```py
+      import numpy as np
+      import cv2
+      def pil_to_numpy(pil_img):
+          return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+      ```
+    - OCR 调用兼容性：使用 `inspect.signature` 查询 `ocr.ocr` 或 `ocr.predict` 是否支持 `cls`，再决定是否传入。
+    - OCR 单例：在模块级别使用锁和懒初始化确保线程安全且仅初始化一次。
+    - 结果解析：兼容不同 PaddleOCR 版本的返回格式，稳健地提取文本字段。
+
+    五、测试与验证结果
+    - 在若干测试 PPT 上验证后：
+      - 表格内容（包括截图表格）可读，结构保留；
+      - 图表标签（例如图表上的数值）能被识别并纳入提取结果；
+      - SmartArt 与复杂排版内容的文本被补全；
+      - OCR 初始化错误已通过单例模式修复；
+      - 向量化与入库流程（Milvus）顺利完成，例如：
+        ```
+        [OCR] 初始化 PaddleOCR（仅首次）...
+        [向量化] 开始向量化 806 个文本片段...
+        [向量化] 完成
+        [知识库] 成功插入 806 条知识
+        ```
+
+    六、建议的依赖与版本（参考，按需调整）
+    - Python >=3.12.4
+    - unstructured >= 0.18.0
+    - unstructured_inference >= 1.1.0
+    - python-pptx >= 1.0.0
+    - pillow >= 9.x
+    - paddleocr >= 3.x（或与项目兼容的稳定版本）
+    - paddlepaddle >= 2.4 / 或与 paddleocr 要求一致（推荐使用官方兼容的版本）
+    - paddlex >= 3.x（若使用 paddlex 推理组件）
+    - opencv-python >= 4.6（或使用 opencv-python-headless）
+    - numpy >= 1.21
+
+    七、影响范围与后续建议
+    - 受益模块：PPTX、PDF、DOCX（含图片）、通用向量化流程。
+    - 若要提升 OCR 精度：可考虑图像预处理（去噪、二值化、裁剪表格单元格）及使用更高精度的 PaddleOCR 模型。
+    - 若要进一步降低外部 API 请求失败风险：在 `manager.py` 里实现 embeddings 分批、重试与限速（已实现基础分批）。
+
+    八、结论
+    本次优化已将 PPT 中图片内的文字从“被跳过”变为可识别并成功入库。已修复输入类型错误、OCR 重复初始化问题，并提升了向量化上传的稳定性。
+
+    如需我把这些变更整理为 README / DEPLOYMENT / CHANGELOG 的条目并提交补丁，请确认，随后我会生成修改补丁供你审阅。
+- PDF 表格抽取保持完整流程
+
+
