@@ -31,7 +31,6 @@ def get_ocr():
                 _ocr_instance = PaddleOCR(
                     use_angle_cls=True,  # 文本方向校正
                     lang='ch',
-                    use_gpu=False,
                     det_db_thresh=0.2,    # 默认0.3，调低后更敏感
                     det_db_box_thresh=0.4, # 默认0.5，降低文本框过滤阈值
                     det_db_unclip_ratio=2.0, # 扩大文本框范围，避免小字被截断
