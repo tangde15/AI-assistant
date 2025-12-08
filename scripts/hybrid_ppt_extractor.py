@@ -27,16 +27,8 @@ def get_ocr():
     if _ocr_instance is None:
         with _ocr_lock:
             if _ocr_instance is None:   # 双重检查，线程安全
-                print("[OCR] 初始化 PaddleOCR（仅首次，增强小字识别）...")
-                _ocr_instance = PaddleOCR(
-                    use_textline_orientation=True,  # 文本方向校正
-                    lang='ch',
-                    text_det_thresh=0.2,    # 默认0.3，调低后更敏感
-                    text_det_box_thresh=0.4, # 默认0.5，降低文本框过滤阈值
-                    text_det_unclip_ratio=2.0, # 扩大文本框范围，避免小字被截断
-                    text_rec_input_shape="3, 48, 320", # 调整识别图像尺寸，适配小字
-                    text_recognition_batch_size=1  # 单批次识别，提升小字识别准确率
-                )
+                print("[OCR] 初始化 PaddleOCR（仅首次）...")
+                _ocr_instance = PaddleOCR(use_angle_cls=True, lang='ch')
     return _ocr_instance
 # ==================================================================
 
@@ -102,24 +94,23 @@ def extract_ocr_images(filepath):
                             print(f"[OCR] 无法准备图片用于 OCR: {e}")
                             continue
 
-                    # 调用 OCR：不传递 cls 参数，使用默认配置
+                    # 调用 OCR：判断方法签名是否支持 cls 参数（只在 ocr.ocr 可用时尝试）
                     result = None
                     try:
-                        print(f"[OCR] 准备调用 OCR，输入类型: {type(call_arg)}")
                         if hasattr(ocr, 'ocr'):
-                            # 直接调用，不传 cls 参数
-                            result = ocr.ocr(call_arg)
-                            print(f"[OCR] ocr() 调用成功，返回类型: {type(result)}")
+                            sig = inspect.signature(ocr.ocr)
+                            if 'cls' in sig.parameters:
+                                result = ocr.ocr(call_arg, cls=True)
+                            else:
+                                result = ocr.ocr(call_arg)
                         elif hasattr(ocr, 'predict'):
-                            result = ocr.predict(call_arg)
-                            print(f"[OCR] predict() 调用成功，返回类型: {type(result)}")
+                            sig = inspect.signature(ocr.predict)
+                            if 'cls' in sig.parameters:
+                                result = ocr.predict(call_arg, cls=True)
+                            else:
+                                result = ocr.predict(call_arg)
                         else:
                             raise AttributeError('OCR 对象无 ocr 或 predict 方法')
-                    except Exception as ocr_call_error:
-                        print(f"[OCR] 调用失败: {ocr_call_error}")
-                        import traceback
-                        traceback.print_exc()
-                        result = None
                     finally:
                         # 清理临时文件（如果有）
                         if temp_path and os.path.exists(temp_path):
@@ -128,34 +119,32 @@ def extract_ocr_images(filepath):
                             except Exception:
                                 pass
 
-                    # 解析结果（兼容所有 PaddleOCR 版本的安全写法）
-                    # result 格式通常为: [[[box, (text, score)], ...], ...] 或 [[box, (text, score)], ...]
-                    if result:
-                        print(f"[OCR] 调试 - result 类型: {type(result)}, 长度: {len(result) if isinstance(result, (list, tuple)) else 'N/A'}")
-                        for idx, line in enumerate(result):
-                            if not line:
+                    # 解析结果（支持不同版本返回格式）
+                    for item in result:
+                        if not item:
+                            continue
+                        if isinstance(item, list):
+                            for entry in item:
+                                try:
+                                    text = None
+                                    if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                                        last = entry[-1]
+                                        if isinstance(last, (list, tuple)) and len(last) >= 1:
+                                            text = last[0]
+                                        elif isinstance(last, str):
+                                            text = last
+                                    if text:
+                                        ocr_texts.append(str(text))
+                                except Exception:
+                                    continue
+                        else:
+                            try:
+                                if isinstance(item, dict) and 'text' in item:
+                                    ocr_texts.append(item['text'])
+                                else:
+                                    ocr_texts.append(str(item))
+                            except Exception:
                                 continue
-                            print(f"[OCR] 调试 - line[{idx}] 类型: {type(line)}, 长度: {len(line) if isinstance(line, (list, tuple)) else 'N/A'}")
-                            # line 可能是列表，遍历每个检测项
-                            if isinstance(line, list):
-                                for item_idx, item in enumerate(line):
-                                    try:
-                                        print(f"[OCR] 调试 - item[{item_idx}] 类型: {type(item)}, 长度: {len(item) if isinstance(item, (list, tuple)) else 'N/A'}")
-                                        # item 格式: [box, (text, score)] 或 [box, text, score] 等
-                                        if isinstance(item, (list, tuple)) and len(item) >= 2:
-                                            # 标准格式: item[1] 是 (text, score)
-                                            text_info = item[1]
-                                            if isinstance(text_info, (list, tuple)) and len(text_info) >= 1:
-                                                text = text_info[0]
-                                                if text and isinstance(text, str):
-                                                    ocr_texts.append(text)
-                                                    print(f"[OCR] 提取文本: {text}")
-                                            elif isinstance(text_info, str):
-                                                ocr_texts.append(text_info)
-                                                print(f"[OCR] 提取文本: {text_info}")
-                                    except Exception as e:
-                                        print(f"[OCR] 解析 item 出错: {e}")
-                                        continue
                 except Exception as e:
                     print(f"[OCR] 识别异常: {e}")
     return ocr_texts
