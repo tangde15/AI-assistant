@@ -127,32 +127,28 @@ def extract_ocr_images(filepath):
                             except Exception:
                                 pass
 
-                    # 解析结果（支持不同版本返回格式）
-                    for item in result:
-                        if not item:
-                            continue
-                        if isinstance(item, list):
-                            for entry in item:
-                                try:
-                                    text = None
-                                    if isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                                        last = entry[-1]
-                                        if isinstance(last, (list, tuple)) and len(last) >= 1:
-                                            text = last[0]
-                                        elif isinstance(last, str):
-                                            text = last
-                                    if text:
-                                        ocr_texts.append(str(text))
-                                except Exception:
-                                    continue
-                        else:
-                            try:
-                                if isinstance(item, dict) and 'text' in item:
-                                    ocr_texts.append(item['text'])
-                                else:
-                                    ocr_texts.append(str(item))
-                            except Exception:
+                    # 解析结果（兼容所有 PaddleOCR 版本的安全写法）
+                    # result 格式通常为: [[[box, (text, score)], ...], ...] 或 [[box, (text, score)], ...]
+                    if result:
+                        for line in result:
+                            if not line:
                                 continue
+                            # line 可能是列表，遍历每个检测项
+                            if isinstance(line, list):
+                                for item in line:
+                                    try:
+                                        # item 格式: [box, (text, score)] 或 [box, text, score] 等
+                                        if isinstance(item, (list, tuple)) and len(item) >= 2:
+                                            # 标准格式: item[1] 是 (text, score)
+                                            text_info = item[1]
+                                            if isinstance(text_info, (list, tuple)) and len(text_info) >= 1:
+                                                text = text_info[0]
+                                                if text and isinstance(text, str):
+                                                    ocr_texts.append(text)
+                                            elif isinstance(text_info, str):
+                                                ocr_texts.append(text_info)
+                                    except Exception:
+                                        continue
                 except Exception as e:
                     print(f"[OCR] 识别异常: {e}")
     return ocr_texts
